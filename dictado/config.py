@@ -27,8 +27,11 @@ DEFAULTS = {
     "sonidos": True,
     "microfono": None,
     "microfono_siempre_abierto": False,
-    "texto_contexto": "Hola, ¿qué tal? Te escribo para confirmar la reunión de mañana a las diez.",
+    "texto_contexto": "",
 }
+
+# Valor por defecto de la versión 0.1.0: provocaba que, sin voz, se escribiera esa frase.
+_OLD_CONTEXT = "Hola, ¿qué tal? Te escribo para confirmar la reunión de mañana a las diez."
 
 HELP = {
     "modo": "'mantener': mantén Ctrl pulsado mientras hablas y suéltalo al terminar. "
@@ -51,8 +54,8 @@ HELP = {
     "microfono": "null = micrófono predeterminado de Windows, o parte del nombre del micrófono a usar.",
     "microfono_siempre_abierto": "true = el micrófono queda abierto y no se pierde ni una sílaba al empezar "
     "(Windows mostrará siempre el icono de micrófono en uso; con cascos Bluetooth puede empeorar el sonido).",
-    "texto_contexto": "Texto de ejemplo que orienta el estilo (puntuación, mayúsculas) y vocabulario: "
-    "añade aquí nombres propios o términos técnicos que uses a menudo.",
+    "texto_contexto": "Opcional: nombres propios o términos técnicos que uses a menudo, separados por comas, "
+    "para que los escriba bien (p. ej. 'Iñaki, Kubernetes, Osakidetza').",
 }
 
 
@@ -91,6 +94,9 @@ def load() -> tuple[dict, str | None]:
         except Exception as exc:  # no sobrescribimos el archivo del usuario si está mal
             log.exception("No se pudo leer %s", path)
             return cfg, f"No se pudo leer la configuración ({exc}). Se usan los valores por defecto."
+    if user.get("texto_contexto") == _OLD_CONTEXT:
+        user["texto_contexto"] = ""
+        user.pop("_ayuda", None)  # fuerza reescribir el archivo con la ayuda nueva
     cfg.update({k: v for k, v in user.items() if k in DEFAULTS})
 
     if "_ayuda" not in user or any(k not in user for k in DEFAULTS):

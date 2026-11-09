@@ -23,7 +23,8 @@ from dictado.audio import SAMPLE_RATE
 log = logging.getLogger(__name__)
 
 MIN_SECONDS = 0.3
-SILENCE_PEAK = 0.004  # pico máximo por debajo del cual consideramos que no se ha dicho nada
+SILENCE_PEAK = 0.01  # pico máximo por debajo del cual consideramos que no se ha dicho nada
+MIN_SPEECH_SECONDS = 0.3  # voz mínima (según el detector de voz) para transcribir
 
 # Frases que Whisper "se inventa" con silencio o ruido (vienen de subtítulos de internet).
 _HALLUCINATION_PATTERNS = [
@@ -51,8 +52,12 @@ def _normalize(text: str) -> str:
     return " ".join(re.sub(r"[^\w\s]", " ", text).split())
 
 
-def clean_text(text: str) -> str:
+def clean_text(text: str, prompt: str = "") -> str:
     text = " ".join(text.split())
+    # Whisper a veces "repite" el texto de contexto cuando no oye voz: lo descartamos.
+    norm, norm_prompt = _normalize(text), _normalize(prompt or "")
+    if norm and norm_prompt and norm in norm_prompt:
+        return ""
     for pattern in _HALLUCINATION_PATTERNS:
         text = re.sub(pattern, "", text, flags=re.IGNORECASE)
     text = " ".join(text.split()).strip()
@@ -65,6 +70,17 @@ def has_speech(audio: np.ndarray) -> bool:
     if audio.size < MIN_SECONDS * SAMPLE_RATE:
         return False
     return float(np.max(np.abs(audio))) >= SILENCE_PEAK
+
+
+def speech_seconds(audio: np.ndarray) -> float:
+    """Segundos de voz humana según el detector Silero VAD (incluido en faster-whisper)."""
+    try:
+        from faster_whisper.vad import VadOptions, get_speech_timestamps
+    except Exception:
+        log.warning("Detector de voz no disponible")
+        return audio.size / SAMPLE_RATE
+    chunks = get_speech_timestamps(audio, VadOptions(min_speech_duration_ms=150, speech_pad_ms=0))
+    return sum(c["end"] - c["start"] for c in chunks) / SAMPLE_RATE
 
 
 def _language(cfg) -> str | None:

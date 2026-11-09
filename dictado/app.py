@@ -194,12 +194,16 @@ class DictadoApp:
                 return
             try:
                 if not transcriber.has_speech(audio):
-                    log.info("Grabación vacía o sin voz; se ignora")
+                    log.info("Grabación vacía o en silencio; se ignora")
+                    continue
+                voice = transcriber.speech_seconds(audio)
+                if voice < transcriber.MIN_SPEECH_SECONDS:
+                    log.info("No se detectó voz (%.2fs); se ignora", voice)
                     continue
                 if self._loading:
                     self._notify("El modelo aún se está cargando; tu dictado se escribirá en cuanto esté listo.")
                 t0 = time.time()
-                text = transcriber.clean_text(self.engine.transcribe(audio))
+                text = transcriber.clean_text(self.engine.transcribe(audio), self.cfg.get("texto_contexto", ""))
                 log.info("Reconocido en %.2fs: %d caracteres", time.time() - t0, len(text))
                 if text:
                     if self.cfg.get("espacio_final", True) and not text.endswith(("\n", " ")):
@@ -283,6 +287,7 @@ def selftest(out_path: str | None) -> int:
             list(segments)
             segments, info = model.transcribe(audio, language="es", vad_filter=False, beam_size=5)
             lines.append(f"whisper OK: {[s.text for s in segments]!r}")
+            lines.append(f"vad OK: {transcriber.speech_seconds(audio):.2f}s")
         lines.append("SELFTEST OK")
     except Exception:
         code = 1

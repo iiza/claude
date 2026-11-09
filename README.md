@@ -63,7 +63,7 @@ Opciones más útiles:
 | `tiempo_pulsacion` | `0.3` | Segundos que hay que mantener Ctrl para empezar a grabar. |
 | `idioma` | `"es"` | `"en"`, `"ca"`, `"eu"`, `"gl"`, `"fr"`… o `""` para detectarlo automáticamente. |
 | `modelo_local` | `"large-v3-turbo"` | `"large-v3"` (aún más preciso, más lento) o `"small"` (rápido para PCs modestos). |
-| `texto_contexto` | frase de ejemplo | Añade nombres propios o palabras técnicas que uses a menudo para que las escriba bien. |
+| `texto_contexto` | `""` | Nombres propios o palabras técnicas que uses a menudo, separados por comas, para que las escriba bien. |
 | `metodo_insercion` | `"pegar"` | `"escribir"` si alguna aplicación no acepta Ctrl+V. |
 | `microfono` | `null` | Parte del nombre del micrófono a usar, p. ej. `"USB"`. |
 | `sonidos` | `true` | Pitidos al empezar y terminar. |
