@@ -72,15 +72,25 @@ def has_speech(audio: np.ndarray) -> bool:
     return float(np.max(np.abs(audio))) >= SILENCE_PEAK
 
 
-def speech_seconds(audio: np.ndarray) -> float:
-    """Segundos de voz humana según el detector Silero VAD (incluido en faster-whisper)."""
+def speech_chunks(audio: np.ndarray) -> list[dict]:
+    """Tramos de voz humana (en muestras) según el detector Silero VAD incluido en faster-whisper."""
     try:
         from faster_whisper.vad import VadOptions, get_speech_timestamps
     except Exception:
         log.warning("Detector de voz no disponible")
-        return audio.size / SAMPLE_RATE
-    chunks = get_speech_timestamps(audio, VadOptions(min_speech_duration_ms=150, speech_pad_ms=0))
-    return sum(c["end"] - c["start"] for c in chunks) / SAMPLE_RATE
+        return [{"start": 0, "end": int(audio.size)}]
+    return get_speech_timestamps(
+        audio, VadOptions(min_speech_duration_ms=150, min_silence_duration_ms=300, speech_pad_ms=0))
+
+
+def speech_seconds(audio: np.ndarray) -> float:
+    return sum(c["end"] - c["start"] for c in speech_chunks(audio)) / SAMPLE_RATE
+
+
+def _prompt(cfg, previous: str = "") -> str | None:
+    """Contexto para Whisper: vocabulario del usuario + final de lo ya dictado (da continuidad)."""
+    parts = [(cfg.get("texto_contexto") or "").strip(), previous[-200:].strip()]
+    return " ".join(p for p in parts if p) or None
 
 
 def _language(cfg) -> str | None:
@@ -130,7 +140,7 @@ class LocalTranscriber:
         from faster_whisper import WhisperModel
 
         self.models_dir.mkdir(parents=True, exist_ok=True)
-        threads = max(4, (os.cpu_count() or 4) // 2)
+        threads = max(4, (os.cpu_count() or 4) // 2)  # ~ núcleos físicos
         last_exc = None
         try:
             for device, compute_type in self._devices():
@@ -158,18 +168,18 @@ class LocalTranscriber:
         finally:
             self.ready.set()
 
-    def transcribe(self, audio: np.ndarray) -> str:
+    def transcribe(self, audio: np.ndarray, previous: str = "") -> str:
         self.ready.wait()
         if self.model is None:
             raise RuntimeError(self.error or "El modelo de voz no está disponible")
-        prompt = (self.cfg.get("texto_contexto") or "").strip() or None
+        best = str(self.cfg.get("calidad", "rapida")).lower().startswith("max")
         segments, info = self.model.transcribe(
             audio,
             language=_language(self.cfg),
-            beam_size=5,
+            beam_size=5 if best else 1,
             vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 700, "speech_pad_ms": 300},
-            initial_prompt=prompt,
+            initial_prompt=_prompt(self.cfg, previous),
             condition_on_previous_text=False,
             without_timestamps=True,
         )
@@ -190,11 +200,20 @@ def to_wav_bytes(audio: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
+API_PRESETS = {
+    "groq": ("https://api.groq.com/openai/v1", "whisper-large-v3-turbo", "GROQ_API_KEY"),
+    "openai": ("https://api.openai.com/v1", "gpt-4o-transcribe", "OPENAI_API_KEY"),
+}
+
+
 class ApiTranscriber:
-    """Cualquier API compatible con /v1/audio/transcriptions de OpenAI (OpenAI, Groq...)."""
+    """Cualquier API compatible con /v1/audio/transcriptions de OpenAI (Groq, OpenAI...)."""
 
     def __init__(self, cfg: dict):
         self.cfg = cfg
+        motor = str(cfg.get("motor", "api")).lower()
+        url, model, env = API_PRESETS.get(motor, (cfg["api_url"], cfg["api_modelo"], "OPENAI_API_KEY"))
+        self.url, self.model, self.env = url, model, env
         self.ready = threading.Event()
         self.ready.set()
         self.error = None
@@ -209,14 +228,14 @@ class ApiTranscriber:
             raise RuntimeError(self.error)
 
     def _key(self) -> str:
-        return (self.cfg.get("api_clave") or os.environ.get("OPENAI_API_KEY") or "").strip()
+        return (self.cfg.get("api_clave") or os.environ.get(self.env) or "").strip()
 
-    def transcribe(self, audio: np.ndarray) -> str:
-        fields = {"model": self.cfg["api_modelo"], "response_format": "json"}
+    def transcribe(self, audio: np.ndarray, previous: str = "") -> str:
+        fields = {"model": self.model, "response_format": "json", "temperature": "0"}
         if _language(self.cfg):
             fields["language"] = _language(self.cfg)
-        if (self.cfg.get("texto_contexto") or "").strip():
-            fields["prompt"] = self.cfg["texto_contexto"].strip()
+        if _prompt(self.cfg, previous):
+            fields["prompt"] = _prompt(self.cfg, previous)
 
         boundary = uuid.uuid4().hex
         body = io.BytesIO()
@@ -230,7 +249,7 @@ class ApiTranscriber:
         body.write(to_wav_bytes(audio) + b"\r\n")
         body.write(f"--{boundary}--\r\n".encode())
 
-        url = self.cfg["api_url"].rstrip("/") + "/audio/transcriptions"
+        url = self.url.rstrip("/") + "/audio/transcriptions"
         req = urllib.request.Request(
             url, data=body.getvalue(), method="POST",
             headers={
@@ -240,7 +259,7 @@ class ApiTranscriber:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=90) as resp:
+            with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:300]
@@ -249,6 +268,6 @@ class ApiTranscriber:
 
 
 def create(cfg: dict, models_dir: Path):
-    if str(cfg.get("motor", "local")).lower() == "api":
+    if str(cfg.get("motor", "local")).lower() in ("api", *API_PRESETS):
         return ApiTranscriber(cfg)
     return LocalTranscriber(cfg, models_dir)

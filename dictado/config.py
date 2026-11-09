@@ -18,6 +18,7 @@ DEFAULTS = {
     "idioma": "es",
     "motor": "local",
     "modelo_local": "large-v3-turbo",
+    "calidad": "rapida",
     "dispositivo": "auto",
     "api_url": "https://api.openai.com/v1",
     "api_modelo": "gpt-4o-transcribe",
@@ -40,13 +41,16 @@ HELP = {
     "duracion_maxima": "Segundos máximos de una grabación.",
     "idioma": "Código de idioma ('es', 'en', 'ca', 'eu', 'gl', 'fr'...) o '' para detectarlo automáticamente.",
     "motor": "'local': reconocimiento en tu PC con Whisper (gratis, privado, sin internet tras la primera descarga). "
-    "'api': servicio en la nube compatible con OpenAI (requiere clave).",
+    "'groq': en la nube, casi instantáneo y muy preciso (clave gratuita en console.groq.com, ponla en api_clave). "
+    "'openai': en la nube con gpt-4o-transcribe (clave de OpenAI). "
+    "'api': otro servicio compatible con OpenAI usando api_url y api_modelo.",
     "modelo_local": "Modelo Whisper: 'large-v3-turbo' (muy bueno, recomendado), 'large-v3' (el mejor, más lento), "
     "'medium', 'small' o 'base' (más rápidos, peores).",
+    "calidad": "Solo motor local. 'rapida' (recomendado) o 'maxima' (algo más precisa, bastante más lenta).",
     "dispositivo": "'auto', 'cpu' o 'cuda' (tarjeta NVIDIA).",
-    "api_url": "URL base de la API. OpenAI: https://api.openai.com/v1 · Groq: https://api.groq.com/openai/v1",
-    "api_modelo": "OpenAI: 'gpt-4o-transcribe' o 'whisper-1' · Groq: 'whisper-large-v3-turbo' o 'whisper-large-v3'.",
-    "api_clave": "Tu clave de la API (si está vacía se usa la variable de entorno OPENAI_API_KEY).",
+    "api_url": "Solo con motor 'api': URL base del servicio.",
+    "api_modelo": "Solo con motor 'api': nombre del modelo.",
+    "api_clave": "Tu clave de Groq u OpenAI (con motor 'groq', 'openai' o 'api').",
     "metodo_insercion": "'pegar': usa el portapapeles y Ctrl+V (rápido, lo restaura después). "
     "'escribir': simula la escritura letra a letra.",
     "espacio_final": "Añadir un espacio al final para encadenar dictados.",

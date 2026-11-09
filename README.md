@@ -62,6 +62,7 @@ Opciones más útiles:
 | `modo` | `"mantener"` | `"alternar"`: toca Ctrl una vez para empezar y otra para terminar (manos libres; Esc cancela). |
 | `tiempo_pulsacion` | `0.3` | Segundos que hay que mantener Ctrl para empezar a grabar. |
 | `idioma` | `"es"` | `"en"`, `"ca"`, `"eu"`, `"gl"`, `"fr"`… o `""` para detectarlo automáticamente. |
+| `motor` | `"local"` | `"groq"` u `"openai"` para reconocimiento en la nube casi instantáneo (ver abajo). |
 | `modelo_local` | `"large-v3-turbo"` | `"large-v3"` (aún más preciso, más lento) o `"small"` (rápido para PCs modestos). |
 | `texto_contexto` | `""` | Nombres propios o palabras técnicas que uses a menudo, separados por comas, para que las escriba bien. |
 | `metodo_insercion` | `"pegar"` | `"escribir"` si alguna aplicación no acepta Ctrl+V. |
@@ -70,25 +71,26 @@ Opciones más útiles:
 
 ### Velocidad
 
-Con `large-v3-turbo` en un PC normal (sin tarjeta gráfica) una frase de 5–10 segundos tarda unos 2–5 segundos
-en aparecer. Si tienes una tarjeta **NVIDIA** con CUDA 12 y cuDNN 9 instalados, Dictado la usa automáticamente y es casi
-instantáneo. Si te resulta lento, prueba `"modelo_local": "small"` o el motor en la nube.
+Dictado va transcribiendo **mientras hablas**: cada vez que haces una pausa procesa lo ya dicho, así que al soltar
+Ctrl solo queda el último trozo. Aun así, en un PC sin tarjeta gráfica el motor local tarda alrededor de 1–3 segundos
+en ese último trozo. Si tienes una tarjeta **NVIDIA** con CUDA 12 y cuDNN 9 instalados, Dictado la usa
+automáticamente y es casi instantáneo.
 
-### Motor en la nube (opcional)
+### Casi instantáneo: motor Groq (recomendado si quieres velocidad)
 
-Para el reconocimiento más rápido y preciso posible, con un coste muy bajo por minuto:
+[Groq](https://console.groq.com) ejecuta el mismo modelo Whisper en la nube en unas décimas de segundo, y tiene un
+plan gratuito con un límite diario holgado para dictar.
 
-```json
-"motor": "api",
-"api_url": "https://api.openai.com/v1",
-"api_modelo": "gpt-4o-transcribe",
-"api_clave": "sk-..."
-```
+1. Crea una cuenta en https://console.groq.com y en **API Keys** pulsa **Create API Key**. Copia la clave (`gsk_...`).
+2. Clic derecho en el icono de Dictado → **Abrir configuración** y cambia estas dos líneas:
+   ```json
+   "motor": "groq",
+   "api_clave": "gsk_tu_clave_aqui",
+   ```
+3. Guarda, y en el icono → **Salir**. Vuelve a abrir Dictado.
 
-Con **Groq** (muy rápido y económico): `"api_url": "https://api.groq.com/openai/v1"`,
-`"api_modelo": "whisper-large-v3-turbo"` y tu clave de Groq.
-
-Con este motor el audio de cada dictado se envía a ese servicio.
+También puedes usar `"motor": "openai"` con una clave de OpenAI (modelo `gpt-4o-transcribe`). Con estos motores el
+audio de cada dictado se envía a ese servicio por internet.
 
 ## Limitaciones
 

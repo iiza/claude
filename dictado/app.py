@@ -26,6 +26,17 @@ from dictado import APP_NAME, __version__, config, winutil  # noqa: E402
 log = logging.getLogger("dictado")
 
 
+class Session:
+    """Un dictado: se va transcribiendo por trozos mientras se habla."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.committed = 0  # muestras ya enviadas a transcribir
+        self.closed = False
+        self.cancelled = False
+        self.texts: list[str] = []
+
+
 def setup_logging():
     path = config.data_dir() / "dictado.log"
     handler = logging.handlers.RotatingFileHandler(path, maxBytes=1_000_000, backupCount=2, encoding="utf-8")
@@ -66,6 +77,7 @@ class DictadoApp:
         self._audio_cmds: queue.Queue = queue.Queue()
         self._jobs: queue.Queue = queue.Queue()
         self._pending = 0
+        self._session: Session | None = None
         self._recording = False
         self._loading = True
         self._error: str | None = None
@@ -161,21 +173,32 @@ class DictadoApp:
                 if cmd == "start":
                     if sounds:
                         winutil.beep((880,), 60)
+                    self._session = Session()
                     self.recorder.start()
                     self._recording = True
                     self._refresh()
                 elif cmd == "cancel":
+                    session, self._session = self._session, None
+                    if session is not None:
+                        with session.lock:
+                            session.closed = session.cancelled = True
                     self.recorder.cancel()
                     self._recording = False
                     self._refresh()
                 elif cmd == "finish":
-                    time.sleep(0.15)  # recoger el final de la última palabra
+                    time.sleep(0.12)  # recoger el final de la última palabra
                     audio = self.recorder.stop()
                     self._recording = False
                     if sounds:
                         winutil.beep((660,), 60)
+                    session, self._session = self._session, None
+                    if session is None:
+                        continue
+                    with session.lock:
+                        session.closed = True
+                        tail = audio[session.committed:]
                     self._pending += 1
-                    self._jobs.put(audio)
+                    self._jobs.put((session, tail, True))
                     self._refresh()
                 elif cmd == "quit":
                     return
@@ -185,36 +208,79 @@ class DictadoApp:
                 self._refresh()
                 self._notify(f"No se pudo usar el micrófono: {exc}")
 
-    def _transcribe_loop(self):
-        from dictado import output, transcriber
+    def _stream_loop(self):
+        """Mientras se habla, corta en las pausas y transcribe por adelantado lo ya dicho."""
+        from dictado import chunker, transcriber
+        from dictado.audio import SAMPLE_RATE
 
         while not self._stop.is_set():
-            audio = self._jobs.get()
-            if audio is None:
-                return
+            time.sleep(0.4)
+            session = self._session
+            if session is None or session.closed or self._loading:
+                continue
             try:
-                if not transcriber.has_speech(audio):
-                    log.info("Grabación vacía o en silencio; se ignora")
+                audio = self.recorder.peek()
+                with session.lock:
+                    if session.closed:
+                        continue
+                    pending = audio[session.committed:]
+                    if pending.size < 2 * SAMPLE_RATE:
+                        continue
+                    speech = transcriber.speech_chunks(pending)
+                    cut = chunker.find_cut(speech, pending.size)
+                    if cut is None:
+                        if not speech and pending.size > 5 * SAMPLE_RATE:
+                            session.committed += pending.size - SAMPLE_RATE  # descartar silencio largo
+                        continue
+                    session.committed += cut
+                self._jobs.put((session, pending[:cut], False))
+            except Exception:
+                log.exception("Error al trocear el audio")
+
+    def _transcribe_chunk(self, session: Session, audio) -> str:
+        from dictado import transcriber
+
+        if not transcriber.has_speech(audio):
+            return ""
+        voice = transcriber.speech_seconds(audio)
+        if voice < transcriber.MIN_SPEECH_SECONDS:
+            log.info("No se detectó voz (%.2fs); se ignora", voice)
+            return ""
+        t0 = time.time()
+        raw = self.engine.transcribe(audio, previous=" ".join(session.texts))
+        text = transcriber.clean_text(raw, self.cfg.get("texto_contexto", ""))
+        log.info("Trozo de %.1fs reconocido en %.2fs", audio.size / 16000, time.time() - t0)
+        return text
+
+    def _transcribe_loop(self):
+        from dictado import output
+
+        while not self._stop.is_set():
+            job = self._jobs.get()
+            if job is None:
+                return
+            session, audio, final = job
+            try:
+                if session.cancelled:
                     continue
-                voice = transcriber.speech_seconds(audio)
-                if voice < transcriber.MIN_SPEECH_SECONDS:
-                    log.info("No se detectó voz (%.2fs); se ignora", voice)
-                    continue
-                if self._loading:
+                if final and self._loading:
                     self._notify("El modelo aún se está cargando; tu dictado se escribirá en cuanto esté listo.")
-                t0 = time.time()
-                text = transcriber.clean_text(self.engine.transcribe(audio), self.cfg.get("texto_contexto", ""))
-                log.info("Reconocido en %.2fs: %d caracteres", time.time() - t0, len(text))
+                text = self._transcribe_chunk(session, audio)
                 if text:
-                    if self.cfg.get("espacio_final", True) and not text.endswith(("\n", " ")):
-                        text += " "
-                    output.insert_text(text, str(self.cfg.get("metodo_insercion", "pegar")))
+                    session.texts.append(text)
+                if final:
+                    full = " ".join(session.texts)
+                    if full:
+                        if self.cfg.get("espacio_final", True) and not full.endswith(("\n", " ")):
+                            full += " "
+                        output.insert_text(full, str(self.cfg.get("metodo_insercion", "pegar")))
             except Exception as exc:
                 log.exception("Error al transcribir")
                 self._notify(f"Error al reconocer la voz: {exc}")
             finally:
-                self._pending = max(0, self._pending - 1)
-                self._refresh()
+                if final:
+                    self._pending = max(0, self._pending - 1)
+                    self._refresh()
 
     # ------------------------------------------------------------- menú
     def _toggle_pause(self, icon, item):
@@ -248,7 +314,8 @@ class DictadoApp:
         icon.visible = True
         if self.config_error:
             self._notify(self.config_error)
-        for target in (self._load_engine, self._ticker, self._audio_loop, self._transcribe_loop):
+        for target in (self._load_engine, self._ticker, self._audio_loop, self._stream_loop,
+                       self._transcribe_loop):
             threading.Thread(target=target, daemon=True, name=target.__name__).start()
         self.hooks.start()
         self._refresh()

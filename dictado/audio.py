@@ -114,6 +114,15 @@ class Recorder:
                 self._recording = False
             raise
 
+    def peek(self) -> np.ndarray:
+        """Audio grabado hasta ahora (sin detener la grabación)."""
+        with self._lock:
+            chunks = list(self._chunks)
+            rate = self._rate
+        if not chunks:
+            return np.zeros(0, dtype=np.float32)
+        return resample(np.concatenate(chunks), rate)
+
     def stop(self) -> np.ndarray:
         with self._lock:
             self._recording = False
